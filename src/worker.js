@@ -273,6 +273,22 @@ export default {
   if(request.method==='POST'&&!safePostOrigin(request))return json({error:'Origen no autorizado'},403);
   try{
    await initialize(env);
+   if(request.method==='GET'&&pathname==='/api/ugig-connection'){
+    if(!env.UGIG_API_KEY)return json({configured:false,connected:false,autoApply:false,message:'Falta UGIG_API_KEY en Cloudflare.'});
+    try{
+     const result=await fetch('https://ugig.net/api/auth/session',{
+      headers:{'X-API-Key':env.UGIG_API_KEY,'Accept':'application/json','User-Agent':'ZenixAutoWorker/2.3 (read-only auth test)'},
+      signal:AbortSignal.timeout(12000)
+     });
+     if(!result.ok)return json({configured:true,connected:false,autoApply:false,message:result.status===401||result.status===403?'La clave no fue aceptada por ugig.':'ugig respondió con HTTP '+result.status});
+     const body=(await result.text()).slice(0,3500);
+     let profile={};try{profile=JSON.parse(body)}catch{}
+     const account=profile?.user||profile?.profile||profile?.data?.user||profile?.data?.profile||{};
+     const login=String(account?.username||profile?.username||'').slice(0,60);
+     return json({configured:true,connected:true,autoApply:env.UGIG_AUTO_APPLY==='enabled',
+       username:login||null,message:'ugig aceptó la clave API. Verificación de solo lectura; no se presentó ninguna postulación.'});
+    }catch(e){return json({configured:true,connected:false,autoApply:false,message:'No se pudo consultar ugig: '+fmt(e)})}
+   }
    if(request.method==='GET'&&pathname==='/api/microtasks'){
     const [tasks,artifacts,attempts,runs]=await Promise.all([
      env.DB.prepare('SELECT id,name,brief,source,url,poster,budget_min AS budgetMin,budget_max AS budgetMax,currency,verified,ai_allowed AS aiAllowed,ready,reason,created_at AS createdAt FROM microtasks ORDER BY ready DESC,last_seen DESC LIMIT 70').all(),
