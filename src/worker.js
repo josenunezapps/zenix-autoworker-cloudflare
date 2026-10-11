@@ -8,7 +8,7 @@ import {starterProspects} from './prospectSeeds.js';
 import {whatsAppDraftUrl} from './whatsapp.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 import {buildWorkboard} from './workboard.js';
-import {screenJobicy} from './contractJobs.js';
+import {screenJobicy,suitableForArgentina} from './contractJobs.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -376,7 +376,7 @@ export default {
      env.DB.prepare("SELECT id,title,company,url,job_type AS jobType,location,summary,salary_text AS salaryText,published_at AS publishedAt,source FROM contract_roles WHERE published_at>=datetime('now','-8 days') OR published_at>=strftime('%Y-%m-%dT%H:%M:%S','now','-8 days') ORDER BY published_at DESC LIMIT 40").all(),
      env.DB.prepare('SELECT source,found,status,note,created_at AS createdAt FROM contract_scans ORDER BY id DESC LIMIT 4').all()
     ]);
-    return json({jobs:jobs.results||[],scans:scans.results||[],
+    return json({jobs:(jobs.results||[]).filter(j=>suitableForArgentina(j.location,j.title)),scans:scans.results||[],
      disclaimer:'Ofertas de empleo remoto tipo freelance/contrato publicadas por Jobicy. No son microtrabajos adjudicados ni tareas asignadas a AutoWorker. Verificar requisitos y elegibilidad para Argentina.'});
    }
    if(request.method==='POST'&&pathname==='/api/find-contract-roles'){

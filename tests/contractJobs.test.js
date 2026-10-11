@@ -29,3 +29,20 @@ test('does not pretend missing compensation is a guaranteed payout',()=>{
  assert.equal(screenJobicy({jobs:[job]},now)[0].salaryText,'Salario no publicado');
 });
 test('rejects unexpected provider format',()=>assert.throws(()=>screenJobicy({jobs:null},now)));
+
+test('rejects USA, Italy, and Europe even when location is not marked only',()=>{
+ for(const geo of ['USA','Italy','Europe','United States','Canada','UK','North America','EMEA']){
+  assert.equal(screenJobicy({jobs:[{...job,jobGeo:geo}]},now).length,0,geo);
+ }
+});
+test('remote roles explicitly open to LATAM, Argentina or worldwide remain listed',()=>{
+ for(const geo of ['LATAM','Argentina','Latin America','Worldwide','Anywhere','Global','South America']){
+  assert.equal(screenJobicy({jobs:[{...job,jobGeo:geo}]},now).length,1,geo);
+ }
+});
+test('title cannot override geographic exclusion',()=>{
+ assert.equal(screenJobicy({jobs:[{...job,jobTitle:'Freelance Software Tester With Smart TVs (Remote in Italy)',jobGeo:'Worldwide'}]},now).length,0);
+});
+test('missing location is not assumed compatible with Argentina',()=>{
+ assert.equal(screenJobicy({jobs:[{...job,jobGeo:''}]},now).length,0);
+});

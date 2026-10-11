@@ -3,7 +3,17 @@
 // Source: https://jobicy.com/jobs-rss-feed (terms permit reuse and require credit).
 const DEVELOPMENT=/(?:\b(?:developer|development|software|frontend|front.end|backend|back.end|full.stack|engineer|programmer|wordpress|shopify|website|web\s+designer|react|flutter|android|ios\s+developer|python|javascript|automation|devops|qa\s+automation|api\s+integration|ux\/ui|product\s+designer)\b|desarrollador|programador|aplicaciones|aplicaci[oó]n)/i;
 const QUALIFIED_TYPE=/(?:\b(?:contract|contractor|freelance|freelancer|project.based|temporary|consultant)\b)/i;
-const UNLIKELY_LOCATION=/(?:\b(?:usa\s+only|us\s+only|united\s+states\s+only|europe\s+only|canada\s+only|uk\s+only|united\s+kingdom\s+only|australia\s+only|european\s+union\s+only|india\s+only|apac\s+only)\b)/i;
+// Conservative location fit for a candidate residing in Argentina.
+// Remote does not mean globally available: preserve only explicitly global or LATAM offers.
+const ALLOWED_GEO=/(?:\b(?:worldwide|global|anywhere|latam|latin\s+america|south\s+america|argentina|americas|international|remote\s+worldwide)\b)/i;
+const RESTRICTED_GEO=/(?:\b(?:usa|u\.s\.a\.|united\s+states|us\s+only|north\s+america|europe|european|emea|italy|italia|canada|uk|united\s+kingdom|australia|india|apac|germany|france|spain|netherlands|ireland)\b)/i;
+const TITLE_RESTRICTION=/\b(?:remote\s+in|based\s+in|located\s+in|only\s+in|anywhere\s+in)\s+(?:italy|europe|usa|uk|canada|india|australia)\b/i;
+export function suitableForArgentina(geo,title=''){
+ const place=String(geo||'').trim(),name=String(title||'');
+ if(!place||TITLE_RESTRICTION.test(name))return false;
+ if(RESTRICTED_GEO.test(place))return false;
+ return ALLOWED_GEO.test(place);
+}
 const SIMPLE_HTML=/<[^>]*>/g;
 function stripHtml(text,max=540){return String(text||'').replace(SIMPLE_HTML,' ').replace(/&(?:nbsp|amp|lt|gt|quot|#39);/gi,' ').replace(/\s+/g,' ').trim().slice(0,max)}
 export function screenJobicy(payload,now=Date.now()){
@@ -16,7 +26,7 @@ export function screenJobicy(payload,now=Date.now()){
   const when=Date.parse(j?.pubDate||'');
   const source=String(j?.url||'');
   if(!Number.isSafeInteger(id)||id<1||title.length<7||!DEVELOPMENT.test(title)||
-    !QUALIFIED_TYPE.test(typeText)||UNLIKELY_LOCATION.test(geo)||
+    !QUALIFIED_TYPE.test(typeText)||!suitableForArgentina(geo,title)||
     !Number.isFinite(when)||when>now+3600000||now-when>8*86400000||
     !/^https:\/\/(?:www\.)?jobicy\.com\/jobs\//i.test(source))continue;
   const company=String(j?.companyName||'Empresa sin nombre publicado').trim().slice(0,100);
