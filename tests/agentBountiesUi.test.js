@@ -7,6 +7,8 @@ test('funded agent tasks remain distinct from non-guaranteed job listings',()=>{
   assert.match(HTML,new RegExp('id="'+id+'"'));
  }
  assert.match(HTML,/Recompensas con fondos para agentes/);
+ assert.match(HTML,/BORRADOR SIN ENVIAR/);
+ assert.match(HTML,/data\.drafts/);
  assert.match(HTML,/<details class="worklane"><summary>Ofertas de empleo tradicional \(secundario\)<\/summary>/);
 });
 test('inline UI script compiles',()=>{
