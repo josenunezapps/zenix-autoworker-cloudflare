@@ -3,6 +3,8 @@ import {HTML} from './ui.js';
 import {createSessionValue,verifySessionValue,cookieValue,sessionCookie,expireSessionCookie,safePostOrigin,SESSION_SECONDS} from './session.js';
 import {REGIONS,extractProspects} from './prospects.js';
 import {fetchProspectsWithFallback} from './overpass.js';
+import {discoverWithPhoton} from './photon.js';
+import {starterProspects} from './prospectSeeds.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
@@ -98,6 +100,15 @@ async function runScan(env,origin='manual'){
  }
 }
 // One small OpenStreetMap query per day by Cron; no unsolicited messages are sent.
+async function saveProspects(env,prospects){
+ let stored=0;
+ for(const p of prospects.slice(0,26)){
+  await env.DB.prepare('INSERT INTO prospects(id,name,phone,category,city,address,osm_url,reason,pitch,status,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=CASE WHEN excluded.phone<>? THEN excluded.phone ELSE prospects.phone END,category=excluded.category,address=excluded.address,reason=excluded.reason,last_seen=CURRENT_TIMESTAMP')
+   .bind(p.id,p.name,p.phone,p.category,p.city,p.address,p.osmUrl,p.reason,p.pitch,'to_verify','').run();
+  stored++;
+ }
+ return stored;
+}
 async function discoverClients(env,source='manual'){
  await initialize(env);
  const latest=await env.DB.prepare("SELECT created_at,region,found FROM prospect_runs WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
@@ -105,33 +116,40 @@ async function discoverClients(env,source='manual'){
   const date=Date.parse(String(latest.created_at).replace(' ','T')+'Z');
   const minWait=source==='cron'?20*3600000:2*3600000;
   if(Number.isFinite(date)&&Date.now()-date<minWait)
-   return {cached:true,region:latest.region,found:latest.found,note:'La consulta reciente está guardada. Se evitan solicitudes innecesarias a servidores públicos.'};
+   return {cached:true,region:latest.region,found:latest.found,note:'Resultados anteriores guardados; se evita repetir consultas externas.'};
  }
- // A failed lookup must not skip a city.
  const count=await env.DB.prepare("SELECT COUNT(*) AS total FROM prospect_runs WHERE status='ok'").first();
  const region=REGIONS[Number(count?.total||0)%REGIONS.length];
- const result=await fetchProspectsWithFallback(region,fetch,{timeoutMs:7500});
- if(!result.data){
-  const failures=(result.errors||[]).join('; ').slice(0,480);
-  await env.DB.prepare('INSERT INTO prospect_runs(region,found,status,note) VALUES(?,?,?,?)')
-   .bind(region.name,0,'unavailable',failures).run();
-  const stored=await env.DB.prepare('SELECT COUNT(*) AS total FROM prospects').first();
-  return {region:region.name,found:0,existing:Number(stored?.total||0),source,
-   error:'Los servidores de datos públicos no respondieron. '+failures+
-   '. Los contactos registrados previamente siguen disponibles; podés volver a intentar más tarde.'};
+ const notes=[];let fresh=[],provider=null,examined=0;
+ try{
+  const photon=await discoverWithPhoton(region,fetch,Number(count?.total||0));
+  fresh=photon.leads;examined=photon.examined;provider=photon.provider;
+  notes.push('Photon: '+photon.examined+' fichas verificadas, '+photon.leads.length+' contactos potenciales.');
+ }catch(e){notes.push('Photon: '+fmt(e))}
+ if(!fresh.length){
+  const backup=await fetchProspectsWithFallback(region,fetch,{timeoutMs:4200});
+  if(backup.data){
+   fresh=extractProspects(backup.data,region);provider=backup.provider;examined=fresh.length;
+   notes.push('Overpass alternativo: '+fresh.length+' contactos.');
+  }else notes.push('Overpass no disponible: '+(backup.errors||[]).slice(0,3).join('; '));
  }
- const prospects=extractProspects(result.data,region);
- let stored=0;
- for(const p of prospects.slice(0,22)){
-  await env.DB.prepare('INSERT INTO prospects(id,name,phone,category,city,address,osm_url,reason,pitch,status,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,category=excluded.category,address=excluded.address,reason=excluded.reason,last_seen=CURRENT_TIMESTAMP')
-   .bind(p.id,p.name,p.phone,p.category,p.city,p.address,p.osmUrl,p.reason,p.pitch,'to_verify').run();
-  stored++;
+ let found=0;
+ if(fresh.length)found+=await saveProspects(env,fresh);
+ // Bootstrap only with clearly dated, verified OSM data; never invent businesses.
+ const existing=await env.DB.prepare('SELECT COUNT(*) AS total FROM prospects').first();
+ let cached=0;
+ if(Number(existing?.total||0)<6&&region.city==='Buenos Aires'){
+  cached=await saveProspects(env,starterProspects());
+  notes.push('Incorporadas '+cached+' fichas públicas verificadas el 11/10/2026 como referencias, no como clientes confirmados.');
  }
+ const total=await env.DB.prepare('SELECT COUNT(*) AS total FROM prospects').first();
+ const note=notes.join(' ').slice(0,650);
  await env.DB.prepare('INSERT INTO prospect_runs(region,found,status,note) VALUES(?,?,?,?)')
-  .bind(region.name,stored,'ok','Consulta: '+result.provider+'. OSM © sus colaboradores, licencia ODbL; datos de contacto sujetos a verificación.').run();
- return {region:region.name,found:stored,scanned:prospects.length,source,provider:result.provider,
-  note:stored?'Son posibles contactos, no clientes confirmados; comprobar web y teléfono antes de escribirles. No se envió ningún mensaje.':
-   'El proveedor respondió pero no se encontraron contactos con teléfono en esta zona. Se probará otra ubicación en el siguiente escaneo.'};
+  .bind(region.name,found+cached,(found+cached)?'ok':'unavailable',note).run();
+ return {region:region.name,found:found+cached,fresh:found,starter:cached,existing:Number(total?.total||0),scanned:examined,
+  provider:provider||'Fichas verificadas de OpenStreetMap',source,
+  note:note+'. Confirmá teléfono, web y que siga abierto antes de contactar. Ningún mensaje fue enviado.',
+  error:(found+cached||Number(total?.total||0))?null:'No hubo datos disponibles. '+note};
 }
 
 // Paid microtasks use only platform-supported APIs. No paid human surveys or ad-click farming.
