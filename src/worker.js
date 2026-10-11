@@ -7,6 +7,7 @@ import {discoverWithPhoton} from './photon.js';
 import {starterProspects} from './prospectSeeds.js';
 import {whatsAppDraftUrl} from './whatsapp.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
+import {buildWorkboard} from './workboard.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -154,9 +155,12 @@ async function discoverClients(env,source='manual'){
 }
 
 // Paid microtasks use only platform-supported APIs. No paid human surveys or ad-click farming.
-const MICRO_CATEGORIES=['Development','Data','Design','Writing','Research','development','data'];
+const MICRO_CATEGORIES=['development','data','design','writing','research'];
+const SOFTWARE_SEARCHES=['website','android','automation'];
 async function fetchUgig(category){
- const url='https://ugig.net/api/gigs?listing_type=hiring&category='+encodeURIComponent(category)+'&limit=35&page=1';
+ const url='https://ugig.net/api/gigs?listing_type=hiring&'+
+  (category.startsWith('search:')?'search='+encodeURIComponent(category.slice(7)):'category='+encodeURIComponent(category))+
+  '&sort=newest&limit=30&page=1';
  const r=await fetch(url,{headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/2.2 (read-only, agent microtasks)'},signal:AbortSignal.timeout(16000)});
  if(!r.ok)throw Error('ugig HTTP '+r.status);
  const data=await r.text();
@@ -231,7 +235,7 @@ async function findMicrotasks(env,origin='manual'){
  const result={source:'ugig',scanned:0,found:0,ready:0,prepared:0,applied:0,errors:[],sources:[]};
  const gathered=[];
  // Requests in parallel so Cloudflare doesn't wait seven network round trips.
- const checks=await Promise.all(MICRO_CATEGORIES.map(async category=>{
+ const checks=await Promise.all([...MICRO_CATEGORIES,...SOFTWARE_SEARCHES.map(x=>'search:'+x)].map(async category=>{
   try{return {category,response:await fetchUgig(category)}}
   catch(e){return {category,error:fmt(e)}}
  }));
@@ -272,7 +276,7 @@ export default {
  async fetch(request,env){
   const pathname=new URL(request.url).pathname;
   if(request.method==='GET'&&pathname==='/')return new Response(HTML,{headers:PAGE_HEADERS});
-  if(request.method==='GET'&&pathname==='/health')return json({service:'Zenix AutoWorker',online:true,autoSearch:'12h',note:'Sin envíos ni pagos automáticos'});
+  if(request.method==='GET'&&pathname==='/health')return json({service:'Zenix AutoWorker',online:true,autoSearch:'12h',agentMode:'oportunidades_y_derivaciones',paymentsVerified:false});
   if(request.method==='POST'&&pathname==='/api/login'){
    if(!safePostOrigin(request))return json({error:'Origen de solicitud no autorizado'},403);
    try{
@@ -329,6 +333,44 @@ export default {
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
     const result=await findMicrotasks(env,'manual');
     return json(result);
+   }
+   if(request.method==='GET'&&pathname==='/api/workboard'){
+    const [mi,bo,dr,ap]=await Promise.all([
+     env.DB.prepare('SELECT id,name,brief,source,url,poster,budget_min AS budgetMin,budget_max AS budgetMax,currency,verified,ai_allowed AS aiAllowed,ready,reason,created_at AS createdAt FROM microtasks ORDER BY last_seen DESC LIMIT 120').all(),
+     env.DB.prepare('SELECT id,source,title,url,description,amount,currency,permitted,reason FROM leads ORDER BY last_seen DESC LIMIT 75').all(),
+     env.DB.prepare('SELECT task_id AS taskId,status FROM microtask_artifacts ORDER BY created_at DESC LIMIT 40').all(),
+     env.DB.prepare('SELECT task_id AS taskId,status,application_ref AS applicationRef,created_at AS createdAt FROM microtask_applications ORDER BY created_at DESC LIMIT 60').all()
+    ]);
+    const board=buildWorkboard({
+     microtasks:mi.results||[],bounties:bo.results||[],artifacts:dr.results||[],applications:ap.results||[]
+    });
+    return json({...board,automation:{
+     scheduledSearch:'03:00 y 15:00 UTC',
+     canGenerateDrafts:!!env.AI?.run,
+     ugigConnected:!!env.UGIG_API_KEY,
+     autoApplyEnabled:env.UGIG_AUTO_APPLY==='enabled'&&!!env.UGIG_API_KEY,
+     canVerifyPayment:false,
+     canAutoDeliver:false
+    }});
+   }
+   if(request.method==='GET'&&pathname==='/api/ugig-applications'){
+    if(!env.UGIG_API_KEY)return json({connected:false,applications:[],message:'Falta cuenta ugig conectada'});
+    try{
+     const response=await fetch('https://ugig.net/api/applications/my',{
+      headers:{Accept:'application/json','X-API-Key':env.UGIG_API_KEY},
+      signal:AbortSignal.timeout(9000)
+     });
+     if(!response.ok)return json({connected:false,applications:[],message:'ugig HTTP '+response.status});
+     const text=await response.text();if(text.length>180000)throw Error('Respuesta extensa');
+     const payload=JSON.parse(text);
+     const items=Array.isArray(payload)?payload:Array.isArray(payload.applications)?payload.applications:
+      Array.isArray(payload.data)?payload.data:[];
+     return json({connected:true,applications:items.slice(0,25).map(a=>({
+      id:String(a.id||'').slice(0,65),gigId:String(a.gig_id||'').slice(0,65),
+      status:String(a.status||'sin_confirmar').slice(0,35),rate:Number(a.proposed_rate)||null,
+      createdAt:String(a.created_at||'').slice(0,60)
+     })),message:'Estado consultado a ugig. Una aceptación NO prueba que el pago esté financiado o recibido.'});
+    }catch(e){return json({connected:false,applications:[],message:'No se pudieron revisar las postulaciones: '+fmt(e)})}
    }
    if(request.method==='GET'&&pathname==='/api/prospects'){
     const [rows,hist]=await Promise.all([
