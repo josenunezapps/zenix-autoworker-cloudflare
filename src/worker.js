@@ -1,7 +1,8 @@
 import {listBountyBoard,listOpire,validAdminToken,safeCodeOutput} from './logic.js';
 import {HTML} from './ui.js';
 import {createSessionValue,verifySessionValue,cookieValue,sessionCookie,expireSessionCookie,safePostOrigin,SESSION_SECONDS} from './session.js';
-import {REGIONS,overpassQuery,extractProspects} from './prospects.js';
+import {REGIONS,extractProspects} from './prospects.js';
+import {fetchProspectsWithFallback} from './overpass.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
@@ -99,39 +100,38 @@ async function runScan(env,origin='manual'){
 // One small OpenStreetMap query per day by Cron; no unsolicited messages are sent.
 async function discoverClients(env,source='manual'){
  await initialize(env);
- const latest=await env.DB.prepare('SELECT created_at,region,found FROM prospect_runs WHERE status=? ORDER BY id DESC LIMIT 1').bind('ok').first();
+ const latest=await env.DB.prepare("SELECT created_at,region,found FROM prospect_runs WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
  if(latest){
   const date=Date.parse(String(latest.created_at).replace(' ','T')+'Z');
   const minWait=source==='cron'?20*3600000:2*3600000;
   if(Number.isFinite(date)&&Date.now()-date<minWait)
-   return {cached:true,region:latest.region,newFound:0,found:latest.found,note:'Consulta reciente guardada para respetar los límites de OpenStreetMap.'};
+   return {cached:true,region:latest.region,found:latest.found,note:'La consulta reciente está guardada. Se evitan solicitudes innecesarias a servidores públicos.'};
  }
- const count=await env.DB.prepare('SELECT COUNT(*) AS total FROM prospect_runs').first();
+ // A failed lookup must not skip a city.
+ const count=await env.DB.prepare("SELECT COUNT(*) AS total FROM prospect_runs WHERE status='ok'").first();
  const region=REGIONS[Number(count?.total||0)%REGIONS.length];
- const params=encodeURIComponent(overpassQuery(region));
- const url='https://overpass.private.coffee/api/interpreter?data='+params;
- let scanned=0,stored=0;
- try{
-  const response=await fetch(url,{headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/2.1 (public OSM metadata, ODbL attribution)'},signal:AbortSignal.timeout(24000)});
-  if(!response.ok)throw Error('Servidor de datos públicos HTTP '+response.status);
-  const raw=await response.text();
-  if(raw.length>350000)throw Error('Respuesta de negocios demasiado extensa');
-  const data=JSON.parse(raw);
-  const prospects=extractProspects(data,region);
-  scanned=prospects.length;
-  for(const p of prospects.slice(0,22)){
-   await env.DB.prepare('INSERT INTO prospects(id,name,phone,category,city,address,osm_url,reason,pitch,status,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,category=excluded.category,address=excluded.address,reason=excluded.reason,last_seen=CURRENT_TIMESTAMP')
-    .bind(p.id,p.name,p.phone,p.category,p.city,p.address,p.osmUrl,p.reason,p.pitch,'to_verify').run();
-   stored++;
-  }
+ const result=await fetchProspectsWithFallback(region,fetch,{timeoutMs:7500});
+ if(!result.data){
+  const failures=(result.errors||[]).join('; ').slice(0,480);
   await env.DB.prepare('INSERT INTO prospect_runs(region,found,status,note) VALUES(?,?,?,?)')
-   .bind(region.name,stored,'ok','Datos © colaboradores de OpenStreetMap; la ausencia de web registrada no significa que carezca de una.').run();
-  return {region:region.name,found:stored,scanned,source,note:'Son posibles contactos comerciales. Primero corroborar negocio, teléfono y sitio web. No se envió ningún mensaje.'};
- }catch(e){
-  await env.DB.prepare('INSERT INTO prospect_runs(region,found,status,note) VALUES(?,?,?,?)')
-   .bind(region.name,0,'unavailable',fmt(e)).run();
-  return {region:region.name,found:0,source,error:'OpenStreetMap no respondió: '+fmt(e)};
+   .bind(region.name,0,'unavailable',failures).run();
+  const stored=await env.DB.prepare('SELECT COUNT(*) AS total FROM prospects').first();
+  return {region:region.name,found:0,existing:Number(stored?.total||0),source,
+   error:'Los servidores de datos públicos no respondieron. '+failures+
+   '. Los contactos registrados previamente siguen disponibles; podés volver a intentar más tarde.'};
  }
+ const prospects=extractProspects(result.data,region);
+ let stored=0;
+ for(const p of prospects.slice(0,22)){
+  await env.DB.prepare('INSERT INTO prospects(id,name,phone,category,city,address,osm_url,reason,pitch,status,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,category=excluded.category,address=excluded.address,reason=excluded.reason,last_seen=CURRENT_TIMESTAMP')
+   .bind(p.id,p.name,p.phone,p.category,p.city,p.address,p.osmUrl,p.reason,p.pitch,'to_verify').run();
+  stored++;
+ }
+ await env.DB.prepare('INSERT INTO prospect_runs(region,found,status,note) VALUES(?,?,?,?)')
+  .bind(region.name,stored,'ok','Consulta: '+result.provider+'. OSM © sus colaboradores, licencia ODbL; datos de contacto sujetos a verificación.').run();
+ return {region:region.name,found:stored,scanned:prospects.length,source,provider:result.provider,
+  note:stored?'Son posibles contactos, no clientes confirmados; comprobar web y teléfono antes de escribirles. No se envió ningún mensaje.':
+   'El proveedor respondió pero no se encontraron contactos con teléfono en esta zona. Se probará otra ubicación en el siguiente escaneo.'};
 }
 
 // Paid microtasks use only platform-supported APIs. No paid human surveys or ad-click farming.
@@ -320,7 +320,7 @@ export default {
    }
    if(request.method==='POST'&&pathname==='/api/find-clients'){
     const result=await discoverClients(env,'manual');
-    return json(result,result.error?503:200);
+    return json(result);
    }
    if(request.method==='GET'&&pathname==='/api/leads'){
     const [l,d,h]=await Promise.all([
