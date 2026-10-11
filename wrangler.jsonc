@@ -1,0 +1,22 @@
+{
+  "name": "zenix-autoworker-free-agent",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-11",
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zenix-autoworker-db"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 3,15 * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
