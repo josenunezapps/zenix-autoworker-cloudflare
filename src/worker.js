@@ -337,6 +337,8 @@ async function findFundedAgentBounties(env,origin='manual'){
    eligible:screened.stats.eligible,status:'ok',
    note:'Fondos en garantía: '+screened.stats.escrowFunded+'; tareas descartadas por ser pruebas/no válidas: '+screened.stats.excludedTest+
     '. No se reclamaron tareas ni se realizaron pagos.'};
+  // Replace the previous verified snapshot: claimed or expired tasks must disappear.
+  await env.DB.prepare('DELETE FROM agent_bounty_tasks').run();
   for(const x of screened.tasks){
    await env.DB.prepare('INSERT INTO agent_bounty_tasks(id,title,description,url,reward,currency,escrow_status,created_at,last_seen) VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,reward=excluded.reward,escrow_status=excluded.escrow_status,last_seen=CURRENT_TIMESTAMP')
     .bind(x.id,x.title,x.description,x.url,x.reward,x.currency,x.escrowStatus,x.createdAt).run();
