@@ -10,6 +10,7 @@ import {screenUgigList,makeHonestApplication} from './microtasks.js';
 import {buildWorkboard} from './workboard.js';
 import {screenJobicy,suitableForArgentina} from './contractJobs.js';
 import {classifyFundedAgentTasks,BASEDAGENTS_TASK_FEED} from './agentBounties.js';
+import {screenTaskmarket,TASKMARKET_LIST} from './taskmarket.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -36,6 +37,8 @@ async function initialize(env){
   'CREATE TABLE IF NOT EXISTS contract_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,found INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS agent_bounty_tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,url TEXT NOT NULL,reward REAL NOT NULL,currency TEXT NOT NULL,escrow_status TEXT NOT NULL,created_at TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS agent_bounty_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,examined INTEGER NOT NULL,claimable INTEGER NOT NULL,funded INTEGER NOT NULL,excluded INTEGER NOT NULL,eligible INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS taskmarket_jobs(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,url TEXT NOT NULL,reward REAL NOT NULL,currency TEXT NOT NULL,mode TEXT NOT NULL,deadline TEXT NOT NULL,note TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS taskmarket_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,examined INTEGER NOT NULL,eligible INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'INSERT OR IGNORE INTO scan_lock(id) VALUES(1);'
  );
 }
@@ -349,6 +352,40 @@ async function findFundedAgentBounties(env,origin='manual'){
  return outcome;
 }
 
+// Public crypto escrow bounties. Claim/submit requires a wallet signature and is
+// intentionally disabled until the user connects a separate restricted identity.
+async function findTaskmarketJobs(env,origin='manual'){
+ await initialize(env);
+ const cached=await env.DB.prepare("SELECT created_at,examined,eligible FROM taskmarket_scans WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
+ if(cached){
+  const last=Date.parse(String(cached.created_at).replace(' ','T')+'Z');
+  if(Number.isFinite(last)&&Date.now()-last<(origin==='cron'?8:2)*3600000)
+   return {cached:true,examined:Number(cached.examined),eligible:Number(cached.eligible),source:'Taskmarket'};
+ }
+ let report={source:'Taskmarket',examined:0,eligible:0,status:'unavailable',note:''};
+ try{
+  const resp=await fetch(TASKMARKET_LIST,{
+   headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/3.0 (public read-only bounty discovery)'},
+   signal:AbortSignal.timeout(14000)
+  });
+  if(!resp.ok)throw Error('Taskmarket HTTP '+resp.status);
+  const raw=await resp.text();if(raw.length>700000)throw Error('Demasiados datos de la fuente');
+  const checked=screenTaskmarket(JSON.parse(raw));
+  report={...report,examined:checked.stats.seen,eligible:checked.tasks.length,status:'ok',
+   note:checked.stats.open+' abiertas dentro de límites · '+checked.stats.escrow+
+    ' con garantía reportada · '+checked.stats.excludedRisk+' de alto riesgo excluidas · '+
+    checked.tasks.length+' de desarrollo para estudiar. Ninguna tomada.'};
+  await env.DB.prepare('DELETE FROM taskmarket_jobs').run();
+  for(const task of checked.tasks){
+   await env.DB.prepare('INSERT INTO taskmarket_jobs(id,title,description,url,reward,currency,mode,deadline,note,last_seen) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)')
+    .bind(task.id,task.title,task.description,task.url,task.reward,task.currency,task.mode,task.deadline,task.note).run();
+  }
+ }catch(e){report.note='Taskmarket no respondió: '+fmt(e)}
+ await env.DB.prepare('INSERT INTO taskmarket_scans(examined,eligible,status,note) VALUES(?,?,?,?)')
+  .bind(report.examined,report.eligible,report.status,report.note).run();
+ return report;
+}
+
 export default {
  async fetch(request,env){
   const pathname=new URL(request.url).pathname;
@@ -410,6 +447,18 @@ export default {
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
     const result=await findMicrotasks(env,'manual');
     return json(result);
+   }
+   if(request.method==='GET'&&pathname==='/api/taskmarket-jobs'){
+    const [rows,runs]=await Promise.all([
+     env.DB.prepare("SELECT id,title,description,url,reward,currency,mode,deadline,note FROM taskmarket_jobs WHERE deadline>datetime('now') ORDER BY reward DESC LIMIT 18").all(),
+     env.DB.prepare('SELECT examined,eligible,status,note,created_at AS createdAt FROM taskmarket_scans ORDER BY id DESC LIMIT 3').all()
+    ]);
+    return json({jobs:rows.results||[],runs:runs.results||[],
+     canClaim:false,canSubmit:false,requiresWallet:true,
+     disclaimer:'Tareas públicas con fondos USDC declarados en Taskmarket. Una bounty es un concurso: encontrarla no implica haberla ganado. La ejecución y entrega requiere firma de billetera y revisión técnica.'});
+   }
+   if(request.method==='POST'&&pathname==='/api/find-taskmarket-jobs'){
+    return json(await findTaskmarketJobs(env,'manual'));
    }
    if(request.method==='GET'&&pathname==='/api/agent-bounties'){
     const [rows,history]=await Promise.all([
@@ -502,6 +551,7 @@ export default {
   ctx.waitUntil(findMicrotasks(env,'cron').catch(e=>console.error('Cron microtrabajos',fmt(e))));
   ctx.waitUntil(findRemoteContracts(env,'cron').catch(e=>console.error('Cron vacantes contract',fmt(e))));
   ctx.waitUntil(findFundedAgentBounties(env,'cron').catch(e=>console.error('Cron agentes financiados',fmt(e))));
+  ctx.waitUntil(findTaskmarketJobs(env,'cron').catch(e=>console.error('Cron Taskmarket',fmt(e))));
   if(new Date(event.scheduledTime).getUTCHours()===15)
    ctx.waitUntil(discoverClients(env,'cron').catch(e=>console.error('Cron comercial',fmt(e))));
  }
