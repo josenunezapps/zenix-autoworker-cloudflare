@@ -34,3 +34,22 @@ test('rejects invalid API response and invalid urls by hard-coded origins',()=>{
  assert.throws(()=>screenTaskmarket({bad:[]},now));
  assert.ok(screenTaskmarket({tasks:[base]},now).tasks[0].url.startsWith('https://taskmarket.dev/tasks/'));
 });
+
+test('recognizes a safe standalone SVG illustration as an executable candidate',()=>{
+ const description='The Tiny Junction Inside a Zipper\n\nGoal\nMake an original diagram that explains a zipper mechanism.\n\nDeliverable\nOne static self-contained SVG, containing an original drawing with labelled components and an explanatory caption. No external files or account access.';
+ const r=screenTaskmarket({tasks:[{...base,description}]},now);
+ assert.equal(r.tasks.length,1);
+ assert.match(r.tasks[0].title,/Zipper/);
+ assert.match(r.tasks[0].note,/no garantiza ganar/);
+});
+test('recognizes a safe standalone HTML microapp even without coding buzzwords',()=>{
+ const description='A Rainy Window That Reads Like Music\n\nGoal\nMake a rainy window turn into five musical notes.\n\nDeliverable\nOne self-contained offline HTML file with a native button that switches between the two scenes.';
+ const r=screenTaskmarket({tasks:[{...base,description}]},now);
+ assert.equal(r.tasks.length,1);
+ assert.equal(r.stats.safeSoftware,1);
+});
+test('self-contained artifacts still reject unfunded, paid-action and expired listings',()=>{
+ const description='One static self-contained SVG. Access our wallet and send a deposit to participate in the bounty.';
+ const r=screenTaskmarket({tasks:[{...base,description},{...base,description:'One static self-contained SVG for an educational diagram.',escrowTxHash:null}]},now);
+ assert.equal(r.tasks.length,0);
+});

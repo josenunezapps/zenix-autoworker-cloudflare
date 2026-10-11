@@ -384,7 +384,7 @@ async function findTaskmarketJobs(env,origin='manual'){
  const cached=await env.DB.prepare("SELECT created_at,examined,eligible FROM taskmarket_scans WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
  if(cached){
   const last=Date.parse(String(cached.created_at).replace(' ','T')+'Z');
-  if(Number.isFinite(last)&&Date.now()-last<(origin==='cron'?8:2)*3600000)
+  if(origin==='cron'&&Number.isFinite(last)&&Date.now()-last<8*3600000)
    return {cached:true,examined:Number(cached.examined),eligible:Number(cached.eligible),source:'Taskmarket'};
  }
  let report={source:'Taskmarket',examined:0,eligible:0,status:'unavailable',note:''};
