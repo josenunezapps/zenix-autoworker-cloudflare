@@ -304,7 +304,7 @@ export default {
      env.DB.prepare('SELECT found,ready,drafted,applied,status,notes,created_at AS createdAt FROM microtask_runs ORDER BY id DESC LIMIT 5').all()
     ]);
     return json({tasks:tasks.results||[],artifacts:artifacts.results||[],attempts:attempts.results||[],runs:runs.results||[],
-      autoApplyReady:!!env.UGIG_API_KEY&&env.UGIG_AUTO_APPLY==='enabled',
+      ugigKeyConfigured:!!env.UGIG_API_KEY,autoApplyReady:!!env.UGIG_API_KEY&&env.UGIG_AUTO_APPLY==='enabled',
       policy:'Nunca realizar encuestas humanas, clics, visualizaciones ni resolver CAPTCHAs por recompensa. Propuestas automáticas solo con API autorizada, anuncios verificados y borrador previo.'});
    }
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
