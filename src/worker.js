@@ -1,5 +1,6 @@
 import {listBountyBoard,listOpire,validAdminToken,safeCodeOutput} from './logic.js';
 import {HTML} from './ui.js';
+import {createSessionValue,verifySessionValue,cookieValue,sessionCookie,expireSessionCookie,safePostOrigin,SESSION_SECONDS} from './session.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -92,7 +93,30 @@ export default {
   const pathname=new URL(request.url).pathname;
   if(request.method==='GET'&&pathname==='/')return new Response(HTML,{headers:PAGE_HEADERS});
   if(request.method==='GET'&&pathname==='/health')return json({service:'Zenix AutoWorker',online:true,autoSearch:'12h',note:'Sin envíos ni pagos automáticos'});
-  if(!validAdminToken(request.headers.get('Authorization'),env.ZENIX_ADMIN_TOKEN))return json({error:'Acceso privado. Configurá ZENIX_ADMIN_TOKEN con más de 24 caracteres.'},401);
+  if(request.method==='POST'&&pathname==='/api/login'){
+   if(!safePostOrigin(request))return json({error:'Origen de solicitud no autorizado'},403);
+   try{
+    const raw=await request.text();
+    if(raw.length>1024)throw Error('Entrada demasiado extensa');
+    const token=JSON.parse(raw)?.token;
+    if(typeof token!=='string'||!validAdminToken('Bearer '+token,env.ZENIX_ADMIN_TOKEN))
+      return json({error:'Contraseña incorrecta'},401);
+    const session=await createSessionValue(env.ZENIX_ADMIN_TOKEN);
+    const response=json({authenticated:true,expiresInSeconds:SESSION_SECONDS});
+    response.headers.set('Set-Cookie',sessionCookie(session));
+    return response;
+   }catch(e){return json({error:'No se pudo iniciar sesión: comprobá los datos'},400)}
+  }
+  const bearer=validAdminToken(request.headers.get('Authorization'),env.ZENIX_ADMIN_TOKEN);
+  const cookie=await verifySessionValue(cookieValue(request.headers.get('Cookie')),env.ZENIX_ADMIN_TOKEN);
+  if(request.method==='GET'&&pathname==='/api/session')return json({authenticated:bearer||cookie});
+  if(request.method==='POST'&&pathname==='/api/logout'){
+   if(!safePostOrigin(request))return json({error:'Origen no autorizado'},403);
+   const response=json({authenticated:false});
+   response.headers.set('Set-Cookie',expireSessionCookie());return response;
+  }
+  if(!bearer&&!cookie)return json({error:'Sesión vencida. Volvé a ingresar.'},401);
+  if(request.method==='POST'&&!safePostOrigin(request))return json({error:'Origen no autorizado'},403);
   try{
    await initialize(env);
    if(request.method==='GET'&&pathname==='/api/leads'){
