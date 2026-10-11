@@ -18,7 +18,8 @@ Los contactos comerciales obtenidos de OpenStreetMap NO son encargos confirmados
 - Cloudflare Worker + D1 y Workers AI; escaneo dos veces al día.
 - Fuentes: ugig, BountyBoard, Opire, y opcionalmente Photon/OSM para prospección comercial.
 - La clave UGIG_API_KEY queda como secreto del servidor.
-- UGIG_AUTO_APPLY permanece desactivado si no se habilita específicamente; los filtros estrictos permanecen.
+- UGIG_AUTO_APPLY está marcado como enabled en wrangler.jsonc, pero el Worker solo puede postular por la API autorizada si además tiene UGIG_API_KEY, un encargo apto, borrador previo y el límite diario disponible. No significa que haya enviado postulaciones.
+- BasedAgents: el Worker ahora prepara automáticamente, como máximo, un borrador por escaneo exitoso cuando detecta un encargo financiado, de texto y con todos los datos de entrada. Lo almacena sin reclamar la tarea, sin entregar el resultado y sin cobrar.
 - Código y textos de IA generados son borradores SIN PRUEBAS salvo que se incorporen validaciones externas.
 - El Worker todavía NO ejecuta proyectos completos, NO garantiza entrega y NO puede cobrar o certificar pagos por sí solo.
 - Encuestas de opinión humana falsas, visionado de anuncios, CAPTCHA y fraude de clics están excluidos.
