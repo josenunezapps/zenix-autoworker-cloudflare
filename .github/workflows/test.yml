@@ -1,0 +1,21 @@
+name: Verificar AutoWorker
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validar sintaxis y pruebas locales
+        run: |
+          node --check src/logic.js
+          node --check src/worker.js
+          node --check src/ui.js
+          npm test
