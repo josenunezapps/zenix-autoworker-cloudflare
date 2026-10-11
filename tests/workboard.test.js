@@ -18,9 +18,9 @@ test('agent-ready jobs indicate draft status, not payment',()=>{
  assert.equal(b.agent.length,1);assert.equal(b.agent[0].status,'borrador_pendiente_de_prueba');
  assert.equal(b.stats.paymentsConfirmed,0);
 });
-test('stale items go to verification, not directly to owner',()=>{
+test('stale items never go to the human-work queue',()=>{
  const b=buildWorkboard({microtasks:[{...base,createdAt:'2026-01-15T21:00:00Z'}]},now);
- assert.equal(b.handoff.length,0);assert.equal(b.verify.length,1);
+ assert.equal(b.handoff.length,0);assert.equal(b.verify.length,0);
 });
 test('non-contract business prospects are never treated as paid jobs',()=>{
  const b=buildWorkboard({microtasks:[],bounties:[]},now);
@@ -38,4 +38,41 @@ test('potentially disallowed paid clicks are never routed to autonomous queue',(
 test('no payment counter inferred from accepted applications',()=>{
  const b=buildWorkboard({microtasks:[base],applications:[{taskId:base.id,status:'accepted'}]},now);
  assert.equal(b.stats.paymentsConfirmed,0);
+});
+
+test('iOS UGC campaign is NOT a software development handoff',()=>{
+ const b=buildWorkboard({bounties:[{
+  id:'bb:ios-ugc-2026',source:'BountyBoard',
+  title:'Excelente iOS UGC Campaign — Vienna — Add 20 Local Gems (95 EUR)',
+  description:'Share content and local spots in our iPhone app',amount:95,
+  currency:'EUR',url:'https://www.bountyboard.work/bounties',permitted:0
+ }]},now);
+ assert.equal(b.handoff.length,0);
+ assert.equal(b.stats.excludedNonSoftware,1);
+});
+test('technical writing request should not be falsely routed as software even if description mentions apps',()=>{
+ const b=buildWorkboard({microtasks:[{
+  ...base,name:'Source-cited research and technical writing brief, delivered in 24 hours',
+  brief:'Research a technical brief about different mobile apps and their development process.',
+  budgetMax:10,ready:0
+ }]},now);
+ assert.equal(b.handoff.length,0);
+ assert.equal(b.verify.length,1);
+});
+test('old postings are archived rather than flooding current tasks',()=>{
+ const b=buildWorkboard({microtasks:[{...base,createdAt:'2026-01-15T21:00:00Z'}]},now);
+ assert.equal(b.verify.length,0);
+ assert.equal(b.stats.archivedOldListings,1);
+});
+test('a real recent Android development job is handed to owner',()=>{
+ const b=buildWorkboard({microtasks:[{...base,name:'Build Android booking app for a restaurant',brief:'We need a developer to code and test an Android booking app for tables',ready:0}]},now);
+ assert.equal(b.handoff.length,1);
+});
+test('coding bounties are still surfaced, non-development UX campaigns excluded',()=>{
+ const b=buildWorkboard({bounties:[
+  {id:'opire:issue-98765',source:'Opire',title:'Fix Python API bug',description:'Update endpoint and add tests',amount:50,currency:'USD',permitted:0},
+  {id:'bb:ugc-1234567',source:'BountyBoard',title:'iOS UGC Campaign — Helsinki',description:'Promote app',amount:30,currency:'EUR',permitted:0}
+ ]},now);
+ assert.equal(b.handoff.length,1);
+ assert.equal(b.handoff[0].title,'Fix Python API bug');
 });
