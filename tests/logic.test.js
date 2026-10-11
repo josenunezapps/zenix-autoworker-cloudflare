@@ -1,0 +1,13 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {listBountyBoard,listOpire,validAdminToken,safeCodeOutput} from '../src/logic.js';
+const bounty={id:'cmv1drg8n000n8gea8dhluykb',status:'OPEN',reward:30000,currency:'USD',category:'Development',allowAgents:true,maxHunters:2,_count:{claims:1},title:'Arreglar bug',description:'Revisar código'};
+test('acepta bounty con permiso IA y cupo',()=>{const j=listBountyBoard({bounties:[bounty]})[0];assert.equal(j.permitted,true);assert.equal(j.amount,300)});
+test('bloquea si prohíbe agentes',()=>assert.equal(listBountyBoard({bounties:[{...bounty,allowAgents:false}]})[0].permitted,false));
+test('bloquea cupos agotados',()=>assert.equal(listBountyBoard({bounties:[{...bounty,maxHunters:1}]})[0].permitted,false));
+test('bloquea encargos no informáticos',()=>assert.equal(listBountyBoard({bounties:[{...bounty,category:'Marketing'}]})[0].permitted,false));
+test('rechaza dinero e IDs inválidos',()=>assert.equal(listBountyBoard({bounties:[{...bounty,id:'bad'},{...bounty,reward:-1}]}).length,0));
+test('no presupone permiso IA en Opire',()=>{const j=listOpire([{id:'01HTN11YX5NYSS7GGB3SHNCJSS',url:'https://github.com/foo/bar/issues/1',pendingPrice:{value:6000,unit:'USD_CENT'}}])[0];assert.equal(j.permitted,false);assert.equal(j.amount,60)});
+test('rechaza enlaces PR en Opire',()=>assert.equal(listOpire([{id:'01HTN11YX5NYSS7GGB3SHNCJSS',url:'https://github.com/foo/bar/pull/1',pendingPrice:{value:6000,unit:'USD_CENT'}}]).length,0));
+test('token largo exacto',()=>{const x='x'.repeat(32);assert.equal(validAdminToken('Bearer '+x,x),true);assert.equal(validAdminToken('Bearer '+x.slice(1),x),false);assert.equal(validAdminToken('Bearer '+x,'short'),false)});
+test('borra exceso de tamaño de código',()=>assert.equal(safeCodeOutput('x'.repeat(26000)).length,17000));
