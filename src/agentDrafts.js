@@ -8,7 +8,7 @@ export function isSelfContainedAgentTask(job){
     !Number.isFinite(job.reward)||job.reward<=0||job.reward>50)return false;
  const title=String(job.title||'').slice(0,180);
  const description=String(job.description||'').slice(0,4000);
- if(!TEXT_JOB.test(title)||EXTERNAL.test(title+' '+description))return false;
+ if(!TEXT_JOB.test(title)||EXTERNAL.test(title+' '+description)||/https?:\/\/|www\./i.test(title+' '+description))return false;
  const match=description.match(INPUT);
  const payload=match?.[1]?.trim()||'';
  return payload.length>=80&&payload.length<=2300;
