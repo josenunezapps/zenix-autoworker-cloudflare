@@ -135,14 +135,16 @@ async function discoverClients(env,source='manual'){
 }
 
 // Paid microtasks use only platform-supported APIs. No paid human surveys or ad-click farming.
-const MICRO_CATEGORIES=['Development','Data','Design'];
+const MICRO_CATEGORIES=['Development','Data','Design','Writing','Research','development','data'];
 async function fetchUgig(category){
- const url='https://ugig.net/api/gigs?category='+encodeURIComponent(category)+'&limit=25&page=1';
+ const url='https://ugig.net/api/gigs?listing_type=hiring&category='+encodeURIComponent(category)+'&limit=35&page=1';
  const r=await fetch(url,{headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/2.2 (read-only, agent microtasks)'},signal:AbortSignal.timeout(16000)});
  if(!r.ok)throw Error('ugig HTTP '+r.status);
  const data=await r.text();
- if(data.length>200000)throw Error('Respuesta ugig demasiado grande');
- return screenUgigList(JSON.parse(data));
+ if(data.length>250000)throw Error('Respuesta ugig demasiado grande');
+ const body=JSON.parse(data);
+ if(!Array.isArray(body?.gigs))throw Error('La API cambió su formato');
+ return {items:screenUgigList(body),scanned:body.gigs.length};
 }
 async function storeMicrotasks(env,rows){
  for(const j of rows.slice(0,50))await env.DB.prepare(
@@ -202,19 +204,24 @@ async function findMicrotasks(env,origin='manual'){
  await initialize(env);
  const last=await env.DB.prepare("SELECT created_at,found,ready FROM microtask_runs WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
  const cachedFor=origin==='cron'?10*3600000:2*3600000;
- if(last){
+ if(last&&Number(last.found)>0){
   const time=Date.parse(String(last.created_at).replace(' ','T')+'Z');
   if(Number.isFinite(time)&&Date.now()-time<cachedFor)
    return {cached:true,found:last.found,ready:last.ready,prepared:0,applied:0,errors:[]};
  }
- const result={source:'ugig',found:0,ready:0,prepared:0,applied:0,errors:[]};
+ const result={source:'ugig',scanned:0,found:0,ready:0,prepared:0,applied:0,errors:[],sources:[]};
  const gathered=[];
- for(const category of MICRO_CATEGORIES){
-  try{const jobs=await fetchUgig(category);gathered.push(...jobs);}
-  catch(e){result.errors.push(category+': '+fmt(e))}
+ // Requests in parallel so Cloudflare doesn't wait seven network round trips.
+ const checks=await Promise.all(MICRO_CATEGORIES.map(async category=>{
+  try{return {category,response:await fetchUgig(category)}}
+  catch(e){return {category,error:fmt(e)}}
+ }));
+ for(const item of checks){
+  if(item.error){result.errors.push(item.category+': '+item.error);result.sources.push({category:item.category,error:item.error})}
+  else{result.scanned+=item.response.scanned;gathered.push(...item.response.items);result.sources.push({category:item.category,scanned:item.response.scanned,found:item.response.items.length})}
  }
- // Avoid retrying malformed or temporarily blocked provider every minute.
- const unique=[...new Map(gathered.map(j=>[j.id,j])).values()].slice(0,60);
+ // Show candidates for manual verification, including older listings; never auto-apply to them.
+ const unique=[...new Map(gathered.map(j=>[j.id,j])).values()].slice(0,45);
  await storeMicrotasks(env,unique);
  result.found=unique.length;result.ready=unique.filter(x=>x.ready).length;
  const candidate=unique.find(x=>x.ready);
@@ -238,7 +245,7 @@ async function findMicrotasks(env,origin='manual'){
   }
  }
  await env.DB.prepare('INSERT INTO microtask_runs(found,ready,drafted,applied,notes,status) VALUES(?,?,?,?,?,?)')
-  .bind(result.found,result.ready,result.prepared,result.applied,JSON.stringify(result.errors),unique.length||result.errors.length===0?'ok':'unavailable').run();
+  .bind(result.found,result.ready,result.prepared,result.applied,JSON.stringify({scanned:result.scanned,sources:result.sources,errors:result.errors}),unique.length||result.errors.length===0?'ok':'unavailable').run();
  return result;
 }
 
@@ -294,7 +301,7 @@ export default {
      env.DB.prepare('SELECT id,name,brief,source,url,poster,budget_min AS budgetMin,budget_max AS budgetMax,currency,verified,ai_allowed AS aiAllowed,ready,reason,created_at AS createdAt FROM microtasks ORDER BY ready DESC,last_seen DESC LIMIT 70').all(),
      env.DB.prepare('SELECT task_id AS taskId,body,status,created_at AS createdAt FROM microtask_artifacts ORDER BY created_at DESC LIMIT 8').all(),
      env.DB.prepare('SELECT task_id AS taskId,status,created_at AS createdAt FROM microtask_applications ORDER BY created_at DESC LIMIT 12').all(),
-     env.DB.prepare('SELECT found,ready,drafted,applied,status,created_at AS createdAt FROM microtask_runs ORDER BY id DESC LIMIT 5').all()
+     env.DB.prepare('SELECT found,ready,drafted,applied,status,notes,created_at AS createdAt FROM microtask_runs ORDER BY id DESC LIMIT 5').all()
     ]);
     return json({tasks:tasks.results||[],artifacts:artifacts.results||[],attempts:attempts.results||[],runs:runs.results||[],
       autoApplyReady:!!env.UGIG_API_KEY&&env.UGIG_AUTO_APPLY==='enabled',
@@ -302,7 +309,7 @@ export default {
    }
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
     const result=await findMicrotasks(env,'manual');
-    return json(result,result.errors?.length&&!result.found?503:200);
+    return json(result);
    }
    if(request.method==='GET'&&pathname==='/api/prospects'){
     const [rows,hist]=await Promise.all([
