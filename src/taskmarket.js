@@ -27,7 +27,7 @@ export function screenTaskmarket(payload,now=Date.now()){
   const name=description.split('\n').find(x=>x.trim())?.trim().slice(0,150)||'Encargo de software';
   entries.push({id,title:name,description:description.slice(0,1500),
    reward:Math.round(reward*100)/100,currency:'USDC',mode:t.mode,source:'Taskmarket',
-   url:'https://taskmarket.dev/task/'+id,deadline:new Date(expiry).toISOString(),
+   url:'https://taskmarket.dev/tasks/'+id,deadline:new Date(expiry).toISOString(),
    escrowTxHash:String(t.escrowTxHash),
    category:'desarrollo',status:'requires_wallet_and_technical_review',
    note:t.mode==='claim'?'Requiere billetera con firma EIP-191, pruebas y aceptación del alcance antes de reclamar.':

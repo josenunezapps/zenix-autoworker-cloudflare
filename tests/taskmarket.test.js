@@ -32,5 +32,5 @@ test('claim mode is a potential handoff until identity signing exists',()=>{
 });
 test('rejects invalid API response and invalid urls by hard-coded origins',()=>{
  assert.throws(()=>screenTaskmarket({bad:[]},now));
- assert.ok(screenTaskmarket({tasks:[base]},now).tasks[0].url.startsWith('https://taskmarket.dev/task/'));
+ assert.ok(screenTaskmarket({tasks:[base]},now).tasks[0].url.startsWith('https://taskmarket.dev/tasks/'));
 });
