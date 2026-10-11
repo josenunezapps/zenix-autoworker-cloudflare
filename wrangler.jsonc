@@ -5,6 +5,9 @@
   "ai": {
     "binding": "AI"
   },
+  "vars": {
+    "UGIG_AUTO_APPLY": "enabled"
+  },
   "d1_databases": [
     {
       "binding": "DB",
