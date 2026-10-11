@@ -5,6 +5,7 @@ import {REGIONS,extractProspects} from './prospects.js';
 import {fetchProspectsWithFallback} from './overpass.js';
 import {discoverWithPhoton} from './photon.js';
 import {starterProspects} from './prospectSeeds.js';
+import {whatsAppDraftUrl} from './whatsapp.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
@@ -334,7 +335,7 @@ export default {
       env.DB.prepare('SELECT id,name,phone,category,city,address,osm_url AS osmUrl,reason,pitch,status,first_seen FROM prospects ORDER BY first_seen DESC LIMIT 80').all(),
       env.DB.prepare('SELECT region,found,status,note,created_at FROM prospect_runs ORDER BY id DESC LIMIT 4').all()
     ]);
-    return json({prospects:rows.results||[],history:hist.results||[],disclaimer:'OpenStreetMap no garantiza que un negocio carezca de web. Contacto exclusivamente manual con autorización.'});
+    return json({prospects:(rows.results||[]).map(p=>({...p,whatsAppUrl:whatsAppDraftUrl(p.phone,p.pitch)})),history:hist.results||[],disclaimer:'El botón abre WhatsApp con mensaje precargado; no envía nada y no se garantiza que el teléfono tenga WhatsApp.'});
    }
    if(request.method==='POST'&&pathname==='/api/find-clients'){
     const result=await discoverClients(env,'manual');
