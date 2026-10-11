@@ -7,7 +7,7 @@ export const REGIONS=[
  {name:'Centro de Rosario',city:'Rosario',bbox:'-32.962,-60.656,-32.938,-60.628'},
  {name:'Centro de Mar del Plata',city:'Mar del Plata',bbox:'-38.015,-57.554,-37.990,-57.528'}
 ];
-const BLOCKED_NAMES=/^(?:mcdonald|starbucks|burger king|subway|carrefour|coto|jumbo|dia\s?%|shell|ypf|farmacity|mostaza)\b/i;
+const BLOCKED_NAMES=/^(?:mcdonald(?:'s|s)?|starbucks|burger king|subway|carrefour|coto|jumbo|dia\s?%|shell|ypf|farmacity|mostaza)\b/i;
 const TYPE_LABELS={
  bakery:'panadería',confectionery:'confitería',clothes:'indumentaria',bicycle:'bicicletería',
  books:'librería',optician:'óptica',hairdresser:'peluquería',beauty:'estética',
