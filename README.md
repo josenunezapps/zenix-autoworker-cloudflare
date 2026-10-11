@@ -1,27 +1,30 @@
-# Zenix AutoWorker — Cloudflare + Qwen Coder + Groq opcional
+# Zenix AutoWorker — motor de encargos remunerados
 
-Motor independiente para buscar oportunidades reales, filtrar permisos de IA y preparar borradores. No envía postulaciones ni entregas.
+## Propósito
 
-## Archivos
-- src/worker.js: Worker, Cron, escaneo, Qwen AI y API privada.
-- src/logic.js: validaciones conservadoras.
-- src/ui.js: panel web de revisión.
-- wrangler.jsonc: configuración de Cloudflare, Workers AI y D1.
-- migrations/0001_init.sql: esquema D1 alternativo (el Worker crea tablas si faltan).
-- tests/logic.test.js: pruebas locales.
+Encontrar encargos remunerados publicados por terceros, intentar ejecutar con IA tareas que permitan agentes, y derivar al propietario los trabajos de páginas web, apps y software que la IA todavía no pueda resolver.
 
-## Publicar
-1. Conectar este repositorio de GitHub a Cloudflare Workers, rama main, raíz /.
-2. Si la configuración pide comando de despliegue, usar npx wrangler deploy.
-3. Cloudflare debe crear o enlazar la base D1 zenix-autoworker-db (binding DB); si falla, crear manualmente la base D1 y colocar database_id en wrangler.jsonc.
-4. Crear un SECRETO privado del Worker llamado ZENIX_ADMIN_TOKEN con un valor aleatorio de al menos 24 caracteres. Nunca poner el valor en GitHub ni compartirlo por chat.
-5. Opcional: crear GROQ_API_KEY como secreto privado del Worker; si falta, Qwen funciona sin análisis de Groq.
-6. Visitar /health y luego /, ingresar el token privado y probar Buscar ahora.
-7. No activar planes pagos; detener el proceso si se exige pago o tarjeta.
+Los contactos comerciales obtenidos de OpenStreetMap NO son encargos confirmados. Esa prospección permanece como herramienta secundaria.
 
-## Seguridad y límites
-Los anuncios públicos son contenido externo no confiable. Opire NO autoriza IA implícitamente. Solo los encargos BountyBoard con allowAgents=true, cupo libre y categoría de programación pueden generar borradores.
-El Worker NO ejecuta ni prueba código ajeno ni verifica pagos. Los borradores están marcados SIN PRUEBAS y requieren revisión humana. No existen postulaciones, PR ni pagos automáticos.
-El Cron corre a las 03:00 y 15:00 UTC. Las cuotas gratuitas pueden cambiar. El código no usa esta conversación de ChatGPT.
+## Bandejas
+
+- Puede intentar la IA: solo candidatos aptos para generar un borrador. No significa entrega ni pago.
+- Para vos: proyectos de software que necesitan desarrollo humano. Verificar anuncio, cliente y cobro antes de aceptar.
+- Por verificar: anuncios viejos, sin permiso explícito, sin presupuesto claro, o sin comprador validado.
+- Postulaciones de ugig: estados consultados de la cuenta, que no equivalen a fondos recibidos.
+
+## Estado técnico al 11/10/2026
+
+- Cloudflare Worker + D1 y Workers AI; escaneo dos veces al día.
+- Fuentes: ugig, BountyBoard, Opire, y opcionalmente Photon/OSM para prospección comercial.
+- La clave UGIG_API_KEY queda como secreto del servidor.
+- UGIG_AUTO_APPLY permanece desactivado si no se habilita específicamente; los filtros estrictos permanecen.
+- Código y textos de IA generados son borradores SIN PRUEBAS salvo que se incorporen validaciones externas.
+- El Worker todavía NO ejecuta proyectos completos, NO garantiza entrega y NO puede cobrar o certificar pagos por sí solo.
+- Encuestas de opinión humana falsas, visionado de anuncios, CAPTCHA y fraude de clics están excluidos.
+
+## Para ganar ingresos automáticamente de verdad
+
+Se necesita conseguir pedidos actuales de compradores reales; confirmar permiso de IA, aceptación y fondos; ejecutar en un entorno aislado con pruebas; entregar mediante la plataforma; y verificar el pago en una cuenta conectada. Si alguna etapa falla o requiere desarrollo humano, la oportunidad pasa a la bandeja del propietario.
 
 © Zenix AR
