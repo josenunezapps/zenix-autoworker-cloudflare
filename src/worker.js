@@ -450,7 +450,7 @@ export default {
    }
    if(request.method==='GET'&&pathname==='/api/taskmarket-jobs'){
     const [rows,runs]=await Promise.all([
-     env.DB.prepare("SELECT id,title,description,url,reward,currency,mode,deadline,note FROM taskmarket_jobs WHERE deadline>datetime('now') ORDER BY reward DESC LIMIT 18").all(),
+     env.DB.prepare("SELECT id,title,description,url,reward,currency,mode,deadline,note FROM taskmarket_jobs WHERE replace(substr(deadline,1,19),'T',' ')>datetime('now') ORDER BY reward DESC LIMIT 18").all(),
      env.DB.prepare('SELECT examined,eligible,status,note,created_at AS createdAt FROM taskmarket_scans ORDER BY id DESC LIMIT 3').all()
     ]);
     return json({jobs:rows.results||[],runs:runs.results||[],
