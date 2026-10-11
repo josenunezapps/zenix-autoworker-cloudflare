@@ -9,6 +9,7 @@ import {whatsAppDraftUrl} from './whatsapp.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 import {buildWorkboard} from './workboard.js';
 import {screenJobicy,suitableForArgentina} from './contractJobs.js';
+import {classifyFundedAgentTasks,BASEDAGENTS_TASK_FEED} from './agentBounties.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -33,6 +34,8 @@ async function initialize(env){
   'CREATE TABLE IF NOT EXISTS microtask_applications(task_id TEXT PRIMARY KEY NOT NULL,status TEXT NOT NULL,application_ref TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS contract_roles(id TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,company TEXT NOT NULL,url TEXT NOT NULL,job_type TEXT NOT NULL,location TEXT NOT NULL,summary TEXT NOT NULL,salary_text TEXT NOT NULL,published_at TEXT NOT NULL,source TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS contract_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,found INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS agent_bounty_tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,url TEXT NOT NULL,reward REAL NOT NULL,currency TEXT NOT NULL,escrow_status TEXT NOT NULL,created_at TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS agent_bounty_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,examined INTEGER NOT NULL,claimable INTEGER NOT NULL,funded INTEGER NOT NULL,excluded INTEGER NOT NULL,eligible INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'INSERT OR IGNORE INTO scan_lock(id) VALUES(1);'
  );
 }
@@ -309,6 +312,41 @@ async function findRemoteContracts(env,origin='manual'){
  return {source:'Jobicy',scanned,found,status,note};
 }
 
+// No claims, API credentials, payments or wallet transactions: discovery only.
+async function findFundedAgentBounties(env,origin='manual'){
+ await initialize(env);
+ const prev=await env.DB.prepare("SELECT created_at,examined,eligible FROM agent_bounty_scans WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
+ const cooldown=(origin==='cron'?8:2)*3600000;
+ if(prev){
+  const last=Date.parse(String(prev.created_at).replace(' ','T')+'Z');
+  if(Number.isFinite(last)&&Date.now()-last<cooldown)
+   return {cached:true,examined:Number(prev.examined),eligible:Number(prev.eligible),source:'BasedAgents'};
+ }
+ let outcome={source:'BasedAgents',examined:0,claimable:0,funded:0,excluded:0,eligible:0,status:'unavailable',note:''};
+ try{
+  const resp=await fetch(BASEDAGENTS_TASK_FEED,{
+   headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/2.9 (read-only public task screening)'},
+   signal:AbortSignal.timeout(13000)
+  });
+  if(!resp.ok)throw Error('API HTTP '+resp.status);
+  const raw=await resp.text();
+  if(raw.length>650000)throw Error('Respuesta demasiado grande');
+  const screened=classifyFundedAgentTasks(JSON.parse(raw));
+  outcome={...outcome,examined:screened.stats.examined,claimable:screened.stats.claimable,
+   funded:screened.stats.escrowFunded,excluded:screened.stats.excludedTest,
+   eligible:screened.stats.eligible,status:'ok',
+   note:'Fondos en garantía: '+screened.stats.escrowFunded+'; tareas descartadas por ser pruebas/no válidas: '+screened.stats.excludedTest+
+    '. No se reclamaron tareas ni se realizaron pagos.'};
+  for(const x of screened.tasks){
+   await env.DB.prepare('INSERT INTO agent_bounty_tasks(id,title,description,url,reward,currency,escrow_status,created_at,last_seen) VALUES(?,?,?,?,?,?,?, ?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET title=excluded.title,description=excluded.description,reward=excluded.reward,escrow_status=excluded.escrow_status,last_seen=CURRENT_TIMESTAMP')
+    .bind(x.id,x.title,x.description,x.url,x.reward,x.currency,x.escrowStatus,x.createdAt).run();
+  }
+ }catch(e){outcome.note='BasedAgents sin respuesta: '+fmt(e)}
+ await env.DB.prepare('INSERT INTO agent_bounty_scans(examined,claimable,funded,excluded,eligible,status,note) VALUES(?,?,?,?,?,?,?)')
+  .bind(outcome.examined,outcome.claimable,outcome.funded,outcome.excluded,outcome.eligible,outcome.status,outcome.note).run();
+ return outcome;
+}
+
 export default {
  async fetch(request,env){
   const pathname=new URL(request.url).pathname;
@@ -370,6 +408,18 @@ export default {
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
     const result=await findMicrotasks(env,'manual');
     return json(result);
+   }
+   if(request.method==='GET'&&pathname==='/api/agent-bounties'){
+    const [rows,history]=await Promise.all([
+     env.DB.prepare("SELECT id,title,description,url,reward,currency,escrow_status AS escrowStatus,created_at AS createdAt FROM agent_bounty_tasks WHERE last_seen>=datetime('now','-7 days') ORDER BY last_seen DESC LIMIT 20").all(),
+     env.DB.prepare('SELECT examined,claimable,funded,excluded,eligible,status,note,created_at AS createdAt FROM agent_bounty_scans ORDER BY id DESC LIMIT 3').all()
+    ]);
+    return json({tasks:rows.results||[],history:history.results||[],
+     canClaimAutomatically:false,canDeliverAutomatically:false,canReceivePayments:false,
+     message:'Solo incluye tareas cuya API indicaba fondos USDC en garantía y que pasaron los filtros básicos. Antes de aceptar se necesitan una identidad de agente, billetera de cobro, ejecución verificable y revisión del alcance.'});
+   }
+   if(request.method==='POST'&&pathname==='/api/find-agent-bounties'){
+    return json(await findFundedAgentBounties(env,'manual'));
    }
    if(request.method==='GET'&&pathname==='/api/contract-roles'){
     const [jobs,scans]=await Promise.all([
@@ -449,6 +499,7 @@ export default {
   ctx.waitUntil(runScan(env,'cron').catch(e=>console.error('Cron de encargos',fmt(e))));
   ctx.waitUntil(findMicrotasks(env,'cron').catch(e=>console.error('Cron microtrabajos',fmt(e))));
   ctx.waitUntil(findRemoteContracts(env,'cron').catch(e=>console.error('Cron vacantes contract',fmt(e))));
+  ctx.waitUntil(findFundedAgentBounties(env,'cron').catch(e=>console.error('Cron agentes financiados',fmt(e))));
   if(new Date(event.scheduledTime).getUTCHours()===15)
    ctx.waitUntil(discoverClients(env,'cron').catch(e=>console.error('Cron comercial',fmt(e))));
  }
