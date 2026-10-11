@@ -8,6 +8,7 @@ import {starterProspects} from './prospectSeeds.js';
 import {whatsAppDraftUrl} from './whatsapp.js';
 import {screenUgigList,makeHonestApplication} from './microtasks.js';
 import {buildWorkboard} from './workboard.js';
+import {screenJobicy} from './contractJobs.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
  {name:'BountyBoard',url:'https://www.bountyboard.work/api/bounties?status=OPEN&limit=100',extract:listBountyBoard},
@@ -30,6 +31,8 @@ async function initialize(env){
   'CREATE TABLE IF NOT EXISTS microtask_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,found INTEGER NOT NULL,ready INTEGER NOT NULL,drafted INTEGER NOT NULL,applied INTEGER NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS microtask_artifacts(task_id TEXT PRIMARY KEY NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS microtask_applications(task_id TEXT PRIMARY KEY NOT NULL,status TEXT NOT NULL,application_ref TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS contract_roles(id TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,company TEXT NOT NULL,url TEXT NOT NULL,job_type TEXT NOT NULL,location TEXT NOT NULL,summary TEXT NOT NULL,salary_text TEXT NOT NULL,published_at TEXT NOT NULL,source TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS contract_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,found INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'INSERT OR IGNORE INTO scan_lock(id) VALUES(1);'
  );
 }
@@ -272,6 +275,40 @@ async function findMicrotasks(env,origin='manual'){
  return result;
 }
 
+// Jobicy public API: fresh remote freelance/contract JOB POSTS.
+// These are human application leads, never autonomous paid microtasks.
+async function findRemoteContracts(env,origin='manual'){
+ await initialize(env);
+ const last=await env.DB.prepare("SELECT created_at,found FROM contract_scans WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
+ if(last){
+  const at=Date.parse(String(last.created_at).replace(' ','T')+'Z');
+  if(Number.isFinite(at)&&Date.now()-at<(origin==='cron'?8:4)*3600000)
+   return {cached:true,found:last.found,source:'Jobicy',note:'Usando búsqueda reciente para respetar la cuota pública.'};
+ }
+ let status='unavailable',found=0,note='',scanned=0;
+ try{
+  const response=await fetch('https://jobicy.com/api/v2/remote-jobs?count=90&industry=engineering',{
+   headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/2.8 (job discovery; credit Jobicy)'},
+   signal:AbortSignal.timeout(16000)
+  });
+  if(!response.ok)throw Error('Jobicy HTTP '+response.status);
+  const content=await response.text();
+  if(content.length>1250000)throw Error('Feed excesivo');
+  const parsed=JSON.parse(content);
+  scanned=Array.isArray(parsed.jobs)?parsed.jobs.length:0;
+  const candidates=screenJobicy(parsed);
+  for(const job of candidates.slice(0,35)){
+   await env.DB.prepare('INSERT INTO contract_roles(id,title,company,url,job_type,location,summary,salary_text,published_at,source,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(id) DO UPDATE SET title=excluded.title,company=excluded.company,url=excluded.url,job_type=excluded.job_type,location=excluded.location,summary=excluded.summary,salary_text=excluded.salary_text,last_seen=CURRENT_TIMESTAMP')
+    .bind(job.id,job.title,job.company,job.url,job.jobType,job.location,job.summary,job.salaryText,job.publishedAt,job.source).run();
+   found++;
+  }
+  status='ok';note='Leídos '+scanned+' anuncios; '+found+' de contrato/freelance con título técnico. No se afirma elegibilidad geográfica ni pago.';
+ }catch(e){note='Fuente sin respuesta: '+fmt(e)}
+ await env.DB.prepare('INSERT INTO contract_scans(source,found,status,note) VALUES(?,?,?,?)')
+  .bind('Jobicy',found,status,note).run();
+ return {source:'Jobicy',scanned,found,status,note};
+}
+
 export default {
  async fetch(request,env){
   const pathname=new URL(request.url).pathname;
@@ -333,6 +370,17 @@ export default {
    if(request.method==='POST'&&pathname==='/api/find-microtasks'){
     const result=await findMicrotasks(env,'manual');
     return json(result);
+   }
+   if(request.method==='GET'&&pathname==='/api/contract-roles'){
+    const [jobs,scans]=await Promise.all([
+     env.DB.prepare("SELECT id,title,company,url,job_type AS jobType,location,summary,salary_text AS salaryText,published_at AS publishedAt,source FROM contract_roles WHERE published_at>=datetime('now','-8 days') OR published_at>=strftime('%Y-%m-%dT%H:%M:%S','now','-8 days') ORDER BY published_at DESC LIMIT 40").all(),
+     env.DB.prepare('SELECT source,found,status,note,created_at AS createdAt FROM contract_scans ORDER BY id DESC LIMIT 4').all()
+    ]);
+    return json({jobs:jobs.results||[],scans:scans.results||[],
+     disclaimer:'Ofertas de empleo remoto tipo freelance/contrato publicadas por Jobicy. No son microtrabajos adjudicados ni tareas asignadas a AutoWorker. Verificar requisitos y elegibilidad para Argentina.'});
+   }
+   if(request.method==='POST'&&pathname==='/api/find-contract-roles'){
+    return json(await findRemoteContracts(env,'manual'));
    }
    if(request.method==='GET'&&pathname==='/api/workboard'){
     const [mi,bo,dr,ap]=await Promise.all([
@@ -400,6 +448,7 @@ export default {
  async scheduled(event,env,ctx){
   ctx.waitUntil(runScan(env,'cron').catch(e=>console.error('Cron de encargos',fmt(e))));
   ctx.waitUntil(findMicrotasks(env,'cron').catch(e=>console.error('Cron microtrabajos',fmt(e))));
+  ctx.waitUntil(findRemoteContracts(env,'cron').catch(e=>console.error('Cron vacantes contract',fmt(e))));
   if(new Date(event.scheduledTime).getUTCHours()===15)
    ctx.waitUntil(discoverClients(env,'cron').catch(e=>console.error('Cron comercial',fmt(e))));
  }
