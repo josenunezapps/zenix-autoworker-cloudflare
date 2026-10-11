@@ -24,8 +24,8 @@ test('presupuestos sin moneda, anunciantes sin verificar y tareas sin material n
  assert.equal(screenGig({...base,description:'Please upload your private document with all the information needed to complete this task. Input: we can only start with files.'},now).ready,false);
 });
 test('ignora anuncios obsoletos, fuera de presupuesto y sin permiso IA',()=>{
- assert.equal(screenGig({...base,created_at:'2026-01-01T11:00:00Z'},now),null);
- assert.equal(screenGig({...base,budget_max:500},now),null);
+ assert.equal(screenGig({...base,created_at:'2025-01-01T11:00:00Z'},now),null);
+ assert.equal(screenGig({...base,budget_max:2500},now),null);
  assert.equal(screenGig({...base,ai_tools_preferred:[]},now).ready,false);
 });
 test('no inventa calificaciones ni promete entrega o cobro',()=>{
@@ -34,3 +34,15 @@ test('no inventa calificaciones ni promete entrega o cobro',()=>{
  assert.throws(()=>makeHonestApplication(screenGig({...base,poster:{account_type:'human',verified:false}},now)));
 });
 test('falla cerrado si proveedor cambia API',()=>assert.throws(()=>screenUgigList({data:[]},now)));
+
+test('shows older possible client requests but never auto-applies',()=>{
+ const job=screenGig({...base,created_at:'2026-01-14T08:00:00Z'},now);
+ assert.ok(job);assert.equal(job.ready,false);assert.match(job.reason,/Anuncio antiguo/);
+});
+test('shows higher budget leads for review only',()=>{
+ const job=screenGig({...base,budget_max:300},now);
+ assert.ok(job);assert.equal(job.ready,false);assert.match(job.reason,/Presupuesto superior/);
+});
+test('excludes service offers disguised as hiring',()=>{
+ assert.equal(screenGig({...base,description:'I will deliver code audits and bug scans for you. '.repeat(4)},now),null);
+});
