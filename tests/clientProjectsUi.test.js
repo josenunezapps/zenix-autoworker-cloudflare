@@ -9,6 +9,9 @@ test('client project search is primary and separate from agent bounties',()=>{
  for(const id of ['projectlane','projectstatus','findprojects','projectcategory','projectsort','moreprojects'])
   assert.ok(HTML.includes('id="'+id+'"'));
  assert.match(HTML,/Freelancer\.com/);
+ assert.match(HTML,/id="statclients"/);
+ assert.match(HTML,/Proyectos de clientes \(sin adjudicar\)/);
+ assert.match(HTML,/Buscar encargos para agentes/);
  assert.match(HTML,/Páginas web/);
  assert.match(HTML,/Software y apps/);
  assert.match(HTML,/Diseño gráfico/);
