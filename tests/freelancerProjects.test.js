@@ -43,3 +43,47 @@ test('safe fixed URLs and no invented API categories',()=>{
  assert.throws(()=>freelanceFeedUrl('https://outside.example'));
  assert.throws(()=>screenFreelancerProjects({result:{projects:[]}},now));
 });
+
+test('screenshot regressions: sales and marketing are not software projects',()=>{
+ const titles=[
+  'Commission-Only B2B SaaS Sales Partner (Procurement Software)',
+  'B2B Web Design Appointment Setter',
+  'App Launch Social Media Campaign',
+  'Freelance Business Development Executive Needed',
+  'Sales Agents Wanted - Ready-to-Launch Social Media App & Website | 10% Commission',
+  '1Win Betting Website Script with Complete Source Code (Laravel)'
+ ];
+ const rows=titles.map((title,i)=>({...base,id:80+i,seo_url:'software/Screenshot-Project-'+i,
+  title,preview_description:'Our growing team needs an experienced freelancer to help us launch this project using our existing platform and website. Please contact us.'}));
+ const x=screenFreelancerProjects({status:'success',result:{projects:rows}},now);
+ assert.deepEqual(x,[]);
+});
+test('keep genuine web and visual design deliverables including marketing brochures',()=>{
+ const rows=[
+ {...base,id:91,seo_url:'web-design/WordPress-Ecommerce-Website-Development',title:'WordPress E-Commerce Website Development',
+  preview_description:'Build a WooCommerce website with checkout, catalog pages and a working responsive layout.'},
+ {...base,id:92,seo_url:'graphic-design/Modern-Marketing-Brochure-Design',title:'Modern Marketing Brochure Design',
+  preview_description:'I need an original well laid out product brochure design with editable assets and print-ready PDF.'}
+ ];
+ const x=screenFreelancerProjects({status:'success',result:{projects:rows}},now);
+ assert.equal(x.length,2);assert.ok(x.some(j=>j.category==='Páginas web'));
+ assert.ok(x.some(j=>j.category==='Diseño gráfico'));
+});
+test('separates technical CAD from graphic design without falsely claiming AI execution',()=>{
+ const x=screenFreelancerProjects({status:'success',result:{projects:[{...base,
+  title:'Mechanical / Product Design Engineer - Modular Cage-Block CAD',
+  seo_url:'cad/Mechanical-Product-Design-Engineer',
+  preview_description:'Create parametric product CAD drawings of an original metal cage block with dimensional details.'
+ }]}},now);
+ assert.equal(x.length,1);assert.equal(x[0].category,'Diseño técnico/CAD');
+});
+test('does not rank low-value foreign-currency listing above reasonable USD project by face number alone',()=>{
+ const x=screenFreelancerProjects({status:'success',result:{projects:[
+ {...base,id:120,seo_url:'software/Native-Mobile-Tweaks',title:'Minor Native Android Tweaks',
+  currency:{code:'INR'},budget:{minimum:1500,maximum:12500},bid_stats:{bid_count:4}},
+ {...base,id:121,seo_url:'web-design/Simple-Responsive-Website',title:'Simple Responsive Website',
+  currency:{code:'USD'},budget:{minimum:300,maximum:500},bid_stats:{bid_count:4}}
+ ]}},now);
+ assert.equal(x.length,2);
+ assert.equal(x[0].id,'freelancer:121');
+});
