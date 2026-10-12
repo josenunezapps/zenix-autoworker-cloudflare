@@ -4,7 +4,7 @@ const WEB=/(?:\b(?:website|web\s*(?:site|design|designer|page|development|app|te
 const SOFTWARE=/(?:\b(?:software|saas|mobile\s+app|app\s+development|android|ios\s+app|flutter|react(?:\s+native)?|next\.js|node\.js|api\s+(?:integration|development)|automation|automate|python|typescript|javascript|bug\s+fix|database|custom\s+plugin|plugin\s+(?:development|integration)|dashboard|chatbot|crm\s+(?:system|development)|desktop\s+app)\b|aplicaci[oó]n|automatizaci[oó]n|programaci[oó]n|desarrollador|programador)/i;
 const DESIGN=/(?:\b(?:logo|branding|brand\s+identity|graphic\s+design|flyer|brochure|poster|illustrat(?:ion|or)|packag(?:e|ing)\s+design|label\s+design|banner\s+design|ui\/ux|ux\/ui|figma|product\s+design|business\s+card|social\s+media\s+graphics)\b|dise[nñ]o\s+gr[aá]fico|logotipo|ilustraci[oó]n|identidad\s+visual|folleto|cartel)/i;
 const UNWANTED=/(?:\b(?:casino|gambling|sportsbook|fake\s+reviews?|captcha|watch\s+ads?|click\s+ads?|buy\s+followers|fake\s+accounts?|pay\s+first|deposit\s+first|escort|adult\s+content)\b)/i;
-const MARKETING_ONLY=/\b(?:social\s+media\s+marketing|seo\s+specialist|facebook\s+ads?|google\s+ads?|sales\s+growth|lead\s+generation|marketing\s+campaign|ad\s+campaign|influencer\s+marketing)\b/i;
+const MARKETING_ONLY=/\b(?:marketing|social\s+media\s+marketing|seo\s+specialist|facebook\s+ads?|google\s+ads?|sales\s+growth|lead\s+generation|marketing\s+campaign|ad\s+campaign|influencer\s+marketing)\b/i;
 const SEO=/^[a-z0-9_-]+(?:\/[a-z0-9_-]+){1,3}$/i;
 const CURRENCY=/^[A-Z]{3}$/;
 const validText=(v,n=160)=>String(v||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,n);
