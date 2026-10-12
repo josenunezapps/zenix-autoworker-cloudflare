@@ -9,7 +9,8 @@ Los contactos comerciales obtenidos de OpenStreetMap NO son encargos confirmados
 ## Proyectos publicados por clientes
 
 - Nueva fuente: Freelancer.com, mediante su API pública de proyectos activos, con búsquedas para web, software/apps y diseño gráfico.
-- Cada anuncio muestra enlace original, presupuesto mínimo y máximo, divisa, cantidad de propuestas y competencia estimada.
+- Cada anuncio muestra enlace original, presupuesto mínimo y máximo, divisa, cantidad de propuestas y competencia estimada. El panel permite ordenar por relevancia, menor cantidad de propuestas o fecha y despliega pocos resultados a la vez.
+- Se descartan ventas a comisión, campañas de marketing sin entregables de diseño, apuestas y anuncios de alto riesgo. Se distingue el diseño técnico/CAD del gráfico y no se comparan cifras monetarias entre distintas divisas como si tuvieran el mismo valor.
 - Se priorizan los anuncios recientes (últimos 7 días); los cerrados, no públicos, falsos o de marketing ajenos a diseño/desarrollo se descartan.
 - El escaneo automático consulta la fuente dos veces por día y el botón principal permite pedir una búsqueda nueva.
 - Encontrar una oferta NO significa adjudicación, aceptación del uso de IA, financiación ni cobro. Las postulaciones a Freelancer.com NO están automatizadas.
