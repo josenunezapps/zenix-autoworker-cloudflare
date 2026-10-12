@@ -11,6 +11,7 @@ import {buildWorkboard} from './workboard.js';
 import {screenJobicy,suitableForArgentina} from './contractJobs.js';
 import {classifyFundedAgentTasks,BASEDAGENTS_TASK_FEED} from './agentBounties.js';
 import {screenTaskmarket,TASKMARKET_LIST} from './taskmarket.js';
+import {FREELANCER_SEARCHES,freelanceFeedUrl,screenFreelancerProjects} from './freelancerProjects.js';
 import {isSelfContainedAgentTask,validateAgentDraft} from './agentDrafts.js';
 const QWEN='@cf/qwen/qwen2.5-coder-32b-instruct',GROQ='openai/gpt-oss-120b';
 const SOURCES=[
@@ -34,7 +35,9 @@ async function initialize(env){
   'CREATE TABLE IF NOT EXISTS microtask_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,found INTEGER NOT NULL,ready INTEGER NOT NULL,drafted INTEGER NOT NULL,applied INTEGER NOT NULL,notes TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS microtask_artifacts(task_id TEXT PRIMARY KEY NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS microtask_applications(task_id TEXT PRIMARY KEY NOT NULL,status TEXT NOT NULL,application_ref TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
-  'CREATE TABLE IF NOT EXISTS contract_roles(id TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,company TEXT NOT NULL,url TEXT NOT NULL,job_type TEXT NOT NULL,location TEXT NOT NULL,summary TEXT NOT NULL,salary_text TEXT NOT NULL,published_at TEXT NOT NULL,source TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+  'CREATE TABLE IF NOT EXISTS client_projects(id TEXT PRIMARY KEY NOT NULL,source TEXT NOT NULL,title TEXT NOT NULL,description TEXT NOT NULL,category TEXT NOT NULL,url TEXT NOT NULL,budget_min REAL NOT NULL,budget_max REAL NOT NULL,currency TEXT NOT NULL,price_model TEXT NOT NULL,proposals INTEGER,competition TEXT NOT NULL,published_at TEXT NOT NULL,score INTEGER NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+   'CREATE TABLE IF NOT EXISTS client_project_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,examined INTEGER NOT NULL,found INTEGER NOT NULL,status TEXT NOT NULL,notes TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
+   'CREATE TABLE IF NOT EXISTS contract_roles(id TEXT PRIMARY KEY NOT NULL,title TEXT NOT NULL,company TEXT NOT NULL,url TEXT NOT NULL,job_type TEXT NOT NULL,location TEXT NOT NULL,summary TEXT NOT NULL,salary_text TEXT NOT NULL,published_at TEXT NOT NULL,source TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS contract_scans(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,found INTEGER NOT NULL,status TEXT NOT NULL,note TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS agent_bounty_tasks(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,url TEXT NOT NULL,reward REAL NOT NULL,currency TEXT NOT NULL,escrow_status TEXT NOT NULL,created_at TEXT NOT NULL,last_seen TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
   'CREATE TABLE IF NOT EXISTS agent_task_drafts(task_id TEXT PRIMARY KEY NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);'+
@@ -283,6 +286,49 @@ async function findMicrotasks(env,origin='manual'){
  return result;
 }
 
+// Freelance client projects: discovery only, NEVER automated bids or payment assumptions.
+async function findClientProjects(env,origin='manual'){
+ await initialize(env);
+ if(origin==='cron'){
+  const cached=await env.DB.prepare("SELECT created_at,found FROM client_project_scans WHERE status='ok' ORDER BY id DESC LIMIT 1").first();
+  const at=Date.parse(String(cached?.created_at||'').replace(' ','T')+'Z');
+  if(Number.isFinite(at)&&Date.now()-at<10*3600000)
+   return {cached:true,found:Number(cached.found),source:'Freelancer.com'};
+ }
+ const report={source:'Freelancer.com',examined:0,found:0,status:'unavailable',errors:[]};
+ const checks=await Promise.all(FREELANCER_SEARCHES.map(async term=>{
+  try{
+   const response=await fetch(freelanceFeedUrl(term),{
+    headers:{Accept:'application/json','User-Agent':'ZenixAutoWorker/3.2 public project discovery'},
+    signal:AbortSignal.timeout(14500)
+   });
+   if(!response.ok)throw Error('HTTP '+response.status);
+   const raw=await response.text();
+   if(raw.length>450000)throw Error('Respuesta demasiado grande');
+   const payload=JSON.parse(raw),matches=screenFreelancerProjects(payload);
+   return {term,examined:payload.result.projects.length,matches};
+  }catch(e){return {term,error:fmt(e)}}
+ }));
+ const candidates=new Map();
+ for(const c of checks){
+  if(c.error){report.errors.push(c.term+': '+c.error);continue}
+  report.examined+=c.examined;
+  for(const j of c.matches)if(!candidates.has(j.id))candidates.set(j.id,j);
+ }
+ const jobs=[...candidates.values()].sort((a,b)=>b.score-a.score||b.budgetMax-a.budgetMax).slice(0,85);
+ if(checks.some(c=>!c.error)){
+  await env.DB.prepare('DELETE FROM client_projects').run();
+  for(const j of jobs){
+   await env.DB.prepare('INSERT INTO client_projects(id,source,title,description,category,url,budget_min,budget_max,currency,price_model,proposals,competition,published_at,score,last_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)')
+    .bind(j.id,j.source,j.title,j.description,j.category,j.url,j.budgetMin,j.budgetMax,j.currency,j.priceModel,j.proposals,j.competition,j.publishedAt,j.score).run();
+  }
+  report.found=jobs.length;report.status=report.errors.length?'partial':'ok';
+ }
+ await env.DB.prepare('INSERT INTO client_project_scans(examined,found,status,notes) VALUES(?,?,?,?)')
+  .bind(report.examined,report.found,report.status,JSON.stringify(report.errors)).run();
+ return report;
+}
+
 // Jobicy public API: fresh remote freelance/contract JOB POSTS.
 // These are human application leads, never autonomous paid microtasks.
 async function findRemoteContracts(env,origin='manual'){
@@ -498,6 +544,18 @@ export default {
    if(request.method==='POST'&&pathname==='/api/find-agent-bounties'){
     return json(await findFundedAgentBounties(env,'manual'));
    }
+   if(request.method==='GET'&&pathname==='/api/client-projects'){
+    const [rows,history]=await Promise.all([
+     env.DB.prepare("SELECT id,source,title,description,category,url,budget_min AS budgetMin,budget_max AS budgetMax,currency,price_model AS priceModel,proposals,competition,published_at AS publishedAt,score FROM client_projects WHERE published_at>=strftime('%Y-%m-%dT%H:%M:%S','now','-7 days') ORDER BY score DESC,published_at DESC LIMIT 65").all(),
+     env.DB.prepare('SELECT examined,found,status,notes,created_at AS createdAt FROM client_project_scans ORDER BY id DESC LIMIT 3').all()
+    ]);
+    return json({jobs:rows.results||[],history:history.results||[],source:'Freelancer.com',
+     canBid:false,canAccept:false,canVerifyPayment:false,
+     message:'Pedidos públicos de clientes, no contratos adjudicados. Presupuestos publicados, no cobrados. Para postularse hace falta cumplir las condiciones de Freelancer.com y usar una cuenta autorizada.'});
+   }
+   if(request.method==='POST'&&pathname==='/api/find-client-projects'){
+    return json(await findClientProjects(env,'manual'));
+   }
    if(request.method==='GET'&&pathname==='/api/contract-roles'){
     const [jobs,scans]=await Promise.all([
      env.DB.prepare("SELECT id,title,company,url,job_type AS jobType,location,summary,salary_text AS salaryText,published_at AS publishedAt,source FROM contract_roles WHERE published_at>=datetime('now','-8 days') OR published_at>=strftime('%Y-%m-%dT%H:%M:%S','now','-8 days') ORDER BY published_at DESC LIMIT 40").all(),
@@ -576,6 +634,7 @@ export default {
   ctx.waitUntil(runScan(env,'cron').catch(e=>console.error('Cron de encargos',fmt(e))));
   ctx.waitUntil(findMicrotasks(env,'cron').catch(e=>console.error('Cron microtrabajos',fmt(e))));
   ctx.waitUntil(findRemoteContracts(env,'cron').catch(e=>console.error('Cron vacantes contract',fmt(e))));
+  ctx.waitUntil(findClientProjects(env,'cron').catch(e=>console.error('Cron clientes freelance',fmt(e))));
   ctx.waitUntil(findFundedAgentBounties(env,'cron').catch(e=>console.error('Cron agentes financiados',fmt(e))));
   ctx.waitUntil(findTaskmarketJobs(env,'cron').catch(e=>console.error('Cron Taskmarket',fmt(e))));
   if(new Date(event.scheduledTime).getUTCHours()===15)
