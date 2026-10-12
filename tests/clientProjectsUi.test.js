@@ -6,12 +6,14 @@ test('client project search is primary and separate from agent bounties',()=>{
  const client=HTML.indexOf('Trabajos publicados por clientes');
  const agent=HTML.indexOf('Recompensas con fondos para agentes');
  assert.ok(client>0);assert.ok(client<agent);
- for(const id of ['projectlane','projectstatus','findprojects','projectcategory','moreprojects'])
+ for(const id of ['projectlane','projectstatus','findprojects','projectcategory','projectsort','moreprojects'])
   assert.ok(HTML.includes('id="'+id+'"'));
  assert.match(HTML,/Freelancer\.com/);
  assert.match(HTML,/Páginas web/);
  assert.match(HTML,/Software y apps/);
  assert.match(HTML,/Diseño gráfico/);
+ assert.match(HTML,/Diseño técnico\/CAD/);
+ assert.match(HTML,/Leer descripción completa/);
 });
 test('public client project API never posts bids on freelancer',()=>{
  assert.match(HTML,/\/api\/find-client-projects/);
